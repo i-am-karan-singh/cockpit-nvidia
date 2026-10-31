@@ -1,0 +1,9 @@
+#pmlogconf-setup 2.0
+ident Cockpit NVIDIA GPU dashboard
+probe nvidia.numcards values ? include : exclude
+delta 10 seconds
+	nvidia.gpuactive
+	nvidia.memused
+	nvidia.memtotal
+	nvidia.temperature
+	nvidia.power

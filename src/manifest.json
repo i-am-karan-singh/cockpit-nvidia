@@ -1,0 +1,14 @@
+{
+  "requires": {
+    "cockpit": "370"
+  },
+  "menu": {
+    "index": {
+      "label": "GPU",
+      "order": 110,
+      "keywords": [
+        { "matches": ["nvidia", "gpu", "graphics", "vram", "temperature", "power"] }
+      ]
+    }
+  }
+}

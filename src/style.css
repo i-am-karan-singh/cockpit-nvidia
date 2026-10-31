@@ -1,0 +1,61 @@
+:root {
+  --gpu-blue: #8bc1f7;
+  --gpu-teal: #62c5c1;
+  --gpu-orange: #f4a261;
+  --gpu-purple: #b9a1e8;
+}
+
+body {
+  margin: 0;
+  background: var(--pf-t--global--background--color--primary--default);
+  color: var(--pf-t--global--text--color--regular);
+  font-family: var(--pf-t--global--font--family--body);
+}
+
+.gpu-page { padding: 16px 32px 48px; min-height: 100vh; }
+.gpu-plot-controls { display: flex; justify-content: flex-end; gap: 6px; margin-bottom: 4px; }
+.gpu-plot-controls select,
+.gpu-plot-controls button {
+  height: 42px;
+  border: 1px solid var(--pf-t--global--border--color--default);
+  border-radius: 20px;
+  background: var(--pf-t--global--background--color--primary--default);
+  color: var(--pf-t--global--text--color--regular);
+  font: inherit;
+  cursor: pointer;
+}
+.gpu-plot-controls select { border-radius: 6px; padding: 0 35px 0 14px; min-width: 136px; }
+.gpu-plot-controls button { width: 62px; font-size: 28px; line-height: 1; border-color: var(--pf-t--global--color--brand--default); }
+.gpu-plot-controls button svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; vertical-align: middle; }
+.gpu-plot-controls button:disabled { opacity: .45; cursor: default; }
+.gpu-plot-controls :focus-visible,
+.gpu-select-link:focus-visible { outline: 2px solid var(--pf-t--global--color--brand--default); outline-offset: 2px; }
+
+.gpu-graphs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px 28px; }
+.gpu-graph { position: relative; min-width: 0; }
+.gpu-graph-title { display: flex; gap: 12px; align-items: baseline; padding-left: 5px; font-size: 15px; }
+.gpu-unit { color: var(--pf-t--global--text--color--subtle); font-size: 13px; }
+.gpu-graph svg { display: block; width: 100%; height: 220px; overflow: visible; }
+.gpu-grid-line,
+.gpu-axis-edge,
+.gpu-axis-tick { stroke: var(--pf-t--global--border--color--default); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.gpu-axis-label { fill: var(--pf-t--global--text--color--subtle); font: 12px var(--pf-t--global--font--family--body); }
+.gpu-hover-line { stroke: var(--pf-t--global--text--color--subtle); stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; }
+.gpu-graph-tooltip { position: absolute; top: 20px; right: 16px; padding: 4px 8px; border: 1px solid var(--pf-t--global--border--color--default); border-radius: 4px; background: var(--pf-t--global--background--color--primary--default); font-size: 12px; pointer-events: none; }
+
+.gpu-devices { margin-top: 48px; }
+.gpu-devices h1 { margin: 0 0 20px; font-size: 28px; font-weight: 400; }
+.gpu-table-scroll { overflow-x: auto; }
+.gpu-table { width: 100%; border-collapse: collapse; text-align: left; font-variant-numeric: tabular-nums; }
+.gpu-table th,
+.gpu-table td { padding: 12px 16px; white-space: nowrap; }
+.gpu-table thead th { font-weight: 600; }
+.gpu-table tbody tr { border-bottom: 1px solid var(--pf-t--global--border--color--default); }
+.gpu-table tbody th { font-weight: 400; }
+.gpu-select-link { padding: 0; border: 0; background: none; color: var(--pf-t--global--color--brand--default); font: inherit; text-decoration: underline dashed; text-underline-offset: 4px; cursor: pointer; }
+.gpu-table tr.is-selected .gpu-select-link { font-weight: 600; }
+.gpu-footnote,
+.gpu-message { color: var(--pf-t--global--text--color--subtle); font-size: 13px; }
+.gpu-message { margin: 12px 0; }
+.gpu-footnote { margin: 14px 16px; }
+@media (max-width: 850px) { .gpu-page { padding: 16px; } .gpu-graphs { grid-template-columns: 1fr; } }
