@@ -1,5 +1,7 @@
 # Cockpit NVIDIA GPU
 
+Authored by codex.
+
 A Cockpit page for NVIDIA GPU performance using Performance Co-Pilot (PCP). It
 shows live utilization, VRAM occupancy, temperature, and power, with PCP archive
 graphs from five minutes through one week. A live process table uses `nvidia-smi`
@@ -60,12 +62,26 @@ the same PatternFly 6.6 package versions as Cockpit 370.
 
 ## Archive handling
 
-Cockpit rejects an archive directory if it contains older archives that lack
-one of the requested GPU metrics. On page load, a small helper creates a
-per-user directory under `/var/tmp` with recent compatible PCP archives.
-It links active archives and makes copies of compressed archives (using reflinks when available),
-which PCP cannot reliably open through symlinks. The originals are untouched.
-The page refreshes this view every 15 minutes, including after archive rotation.
+Cockpit checks every archive in a source directory for the requested metric
+before returning history. An older archive without GPU metrics would make the
+chart's history request fail, even for a recent time range. The live plot still
+receives new readings from `pmcd` while the page is open.
+
+On page load, a helper creates a per-user view under `/var/tmp` containing
+compatible archives. It checks all retained archives, with no age cutoff,
+and caches each archive's compatibility using its index timestamp and size.
+Later runs check only new or changed archives. Active archive files are
+symlinked, so new writes remain visible. Compressed files are copied using
+reflinks where supported, because PCP cannot read them through symlinks;
+`cp --reflink=auto` uses a full copy otherwise. The source archives are
+untouched. The page refreshes the view every 15 minutes to pick up rotations.
+PCP's archive retention controls how far back history is available.
+
+A possible future alternative is a separate GPU `pmlogger` instance writing
+to its own archive directory, which Cockpit can read by absolute path. That
+would remove the filtered view for new history, but it would need separate
+logger and retention configuration. Existing GPU history would need migration
+to appear in the new directory.
 
 The VRAM graph and table use PCP's `nvidia.memused` in GiB. This is NVML's
 older frame-buffer memory counter and includes driver-reserved memory. On this

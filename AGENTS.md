@@ -20,6 +20,10 @@ decisions, host-specific findings, and the reasons behind them.
 5. The graphs now use dynamic y-axis ranges, VRAM is in GiB, the GPU table
    names the model, and the process table shows full paths. The table layout
    wraps long paths so the other columns stay visible.
+6. Archive preparation was made incremental and its nine-day cutoff removed.
+   PCP can read active archive files through symlinks, but compressed volumes
+   must be copied. A dedicated GPU logger was discussed as future work; the
+   current implementation keeps Cockpit's packaged backend untouched.
 
 ## Architecture and data semantics
 
@@ -34,11 +38,21 @@ decisions, host-specific findings, and the reasons behind them.
   Cockpit release. Upstream plot code is not a stable public API.
 - `src/prepare-archives.py` runs from the logged-in Cockpit session on page
   load and every 15 minutes. It creates a per-user view under `/var/tmp` of
-  recent archives containing all required GPU metrics. Active archives are
-  symlinked; compressed archives are copied, preferably with Btrfs reflinks,
-  because PCP cannot reliably open compressed volumes through symlinks.
-  It does not alter or backfill older source archives. Archive retention is
-  PCP's responsibility.
+  every retained archive containing all required GPU metrics, with no age
+  cutoff. It caches both compatible and incompatible results against each
+  archive index's timestamp and size, so only new or changed archives need
+  another `pminfo` check. The cache survives Cockpit logins for the same UID
+  while `/var/tmp` retains it. Active archive volumes, indexes, and metadata
+  are symlinked and see new writes; compressed files are copied with
+  `cp --reflink=auto`, which falls back to a full copy when reflinks are
+  unavailable. PCP cannot open compressed archive files through symlinks.
+  The helper does not alter or backfill source archives; PCP owns retention.
+- The vendored `PlotState` is frontend code. It passes the archive directory
+  to Cockpit's installed Python PCP channel. That channel validates the
+  requested metric in every archive before applying the requested time range;
+  one older archive without the metric aborts that chart's entire history
+  request. Its separate `pmcd` channel still provides live samples starting
+  when the page opens. A frontend start-date filter cannot avoid this failure.
 - PCP `nvidia.memused` is NVML's older device memory counter and includes
   driver-reserved memory. On this host it reported about 414 MiB while
   `nvidia-smi` reported 2 MiB used and 414 MiB reserved. The UI deliberately
@@ -68,6 +82,18 @@ decisions, host-specific findings, and the reasons behind them.
   0% at idle and roughly 31–37% during a 40-second Ollama load, but that is
   intended fan speed, not physical RPM. The user chose to leave fans out of
   the page.
+
+## Future archive option
+
+- A separate `pmlogger` instance could record only GPU metrics into its own
+  archive directory. The GPU plots could use that absolute directory as their
+  archive source; the hostname-derived path is only Cockpit's default. This
+  would eliminate the filtered view for newly recorded GPU history without
+  patching Cockpit. It would require a second logger and retention setup, and
+  existing GPU history in the default archives would not appear without a
+  migration. Future newly added metrics could create the same mixed-history
+  problem. Do not replace the current approach without deciding how to handle
+  those tradeoffs.
 
 ## Working on this headless host
 

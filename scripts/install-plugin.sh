@@ -14,6 +14,13 @@ if [ ! -f "$repo_dir/dist/manifest.json" ]; then
     exit 1
 fi
 
+if [ -L "$target" ]; then
+    echo "Refusing to replace symlink: $target" >&2
+    exit 1
+fi
+if [ -e "$target" ]; then
+    rm -r -- "$target"
+fi
 install -d -m 755 "$target"
 cp -a "$repo_dir/dist/." "$target/"
 echo "Installed Cockpit GPU page at $target"

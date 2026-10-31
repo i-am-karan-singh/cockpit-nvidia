@@ -1,7 +1,8 @@
 import { build } from 'esbuild';
-import { mkdir, copyFile } from 'node:fs/promises';
+import { mkdir, copyFile, rm } from 'node:fs/promises';
 import { sassPlugin } from 'esbuild-sass-plugin';
 
+await rm('dist', { recursive: true, force: true });
 await mkdir('dist', { recursive: true });
 await build({
   entryPoints: ['src/index.jsx'],
