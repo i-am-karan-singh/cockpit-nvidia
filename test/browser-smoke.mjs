@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 
 const secret = fs.readFileSync('.localcred', 'utf8').trim();
 const separator = secret.indexOf(':');
@@ -83,30 +83,50 @@ try {
     document.querySelector('#login-button').click();
   })()`);
   await waitFor(() => evaluate('location.pathname === "/system"'), 'authenticated Cockpit shell');
+  const openedAt = Date.now();
   await cdp('Page.navigate', { url: 'https://127.0.0.1:9090/cockpit-nvidia' });
   await waitFor(() => page('return Boolean(doc.querySelector(".gpu-table tbody tr td")?.textContent?.includes("%") && doc.querySelectorAll(".ct-plot-paths path").length >= 4 && doc.querySelector("#zoom-control"));').catch(() => false), 'GPU live readings and archive charts');
+
+  const archiveSample = await page(`return new Promise(resolve => {
+    const channel = doc.defaultView.cockpit.channel({
+      payload: 'metrics1', source: 'pcp-archive', interval: 10000,
+      timestamp: ${openedAt - 60000}, limit: 4,
+      metrics: [{ name: 'nvidia.temperature' }],
+    });
+    let done = false;
+    const finish = result => {
+      if (done) return;
+      done = true;
+      clearTimeout(timeout);
+      channel.close();
+      resolve(result);
+    };
+    const timeout = setTimeout(() => finish('timed out'), 10000);
+    const hasNumber = value => typeof value === 'number' && Number.isFinite(value) ||
+      Array.isArray(value) && value.some(hasNumber);
+    channel.addEventListener('message', (_event, payload) => {
+      const message = JSON.parse(payload);
+      if (Array.isArray(message) && hasNumber(message)) finish('sample received');
+    });
+    channel.addEventListener('close', (_event, options) => finish(options.problem || 'no historical sample'));
+  });`);
+  if (archiveSample !== 'sample received') throw new Error(`PCP archive history failed: ${archiveSample}`);
 
   const readings = await page('return Array.from(doc.querySelectorAll(".gpu-devices .gpu-table tbody tr td"), item => item.textContent);');
   if (process.env.EXPECT_OLLAMA) {
     await waitFor(() => page('return Array.from(doc.querySelectorAll(".gpu-processes tbody tr"), row => row.textContent).some(text => text.includes("/usr/lib/ollama/llama-server") && text.includes("GiB"));'), 'full Ollama process path and memory');
+    const ollamaPid = await page('return Array.from(doc.querySelectorAll(".gpu-processes tbody tr")).find(row => row.cells[0]?.textContent.includes("/usr/lib/ollama/llama-server"))?.cells[1]?.textContent;');
+    for (let index = 0; index < 6; index++) {
+      const name = await page(`return Array.from(doc.querySelectorAll(".gpu-processes tbody tr")).find(row => row.cells[1]?.textContent === ${JSON.stringify(ollamaPid)})?.cells[0]?.textContent;`);
+      if (name && !name.includes('/usr/lib/ollama/llama-server')) throw new Error(`GPU process ${ollamaPid} was mislabeled as ${name}`);
+      await sleep(1000);
+    }
   }
+  if (await page('return Boolean(Array.from(doc.querySelectorAll(".gpu-processes thead th"), cell => cell.textContent).includes("SM activity"));')) throw new Error('SM activity column is still visible');
   if (await page('return Boolean(doc.querySelector(".gpu-devices h1, .gpu-processes h1"));')) throw new Error('GPU table headings are still visible');
   if (process.env.EXPECT_OLLAMA) {
     const style = await page('const name = doc.querySelector(".gpu-process-path"); const css = getComputedStyle(name); return { decoration: css.textDecorationStyle, color: css.color };');
     if (style.decoration !== 'dotted') throw new Error(`Process path lacks dotted underline: ${JSON.stringify(style)}`);
-  }
-  if (process.env.CHECK_PROCESS_ACTIVITY) {
-    const controller = new AbortController();
-    const inference = fetch('http://127.0.0.1:11434/api/generate', {
-      method: 'POST', headers: { 'content-type': 'application/json' }, signal: controller.signal,
-      body: JSON.stringify({ model: 'zeta2:latest', prompt: 'Write a detailed numbered explanation of GPU matrix multiplication with many examples.', stream: false, options: { num_predict: 1024 } }),
-    }).catch(error => { if (error.name !== 'AbortError') throw error; });
-    try {
-      await waitFor(() => page('return Array.from(doc.querySelectorAll(".gpu-processes tbody tr"), row => row.cells[4]?.textContent).some(text => /^\\d+ %$/.test(text) && Number.parseInt(text) > 0);'), 'live per-process SM activity');
-    } finally {
-      controller.abort();
-      await inference;
-    }
   }
   const model = await page('return doc.querySelector(".gpu-table tbody th")?.textContent;');
   if (!model?.includes('RTX 5090')) throw new Error(`GPU model was not shown: ${model}`);
@@ -138,19 +158,19 @@ try {
   const paths = await page('return Array.from(doc.querySelectorAll(".ct-plot-paths path"), item => ({ length: item.getAttribute("d").length, fill: getComputedStyle(item).fill }));');
   console.log(JSON.stringify({ result: 'pass', model, readings, plots, dark, paths, screenshot: screenshotPath }));
   if (process.env.CHECK_PROCESS_VISIBILITY) {
-    const pmonCount = () => {
-      const result = spawnSync('pgrep', ['-f', '^nvidia-smi pmon -s u -d 5$'], { encoding: 'utf8' });
-      return result.status === 0 ? result.stdout.trim().split('\n').length : 0;
-    };
-    await waitFor(() => pmonCount() > 0, 'active pmon sampler');
     const opened = await evaluate('document.querySelector(\'iframe[src*="/cockpit-nvidia/"]\')?.contentWindow?.cockpit?.hidden');
     if (opened !== false) throw new Error(`GPU page was unexpectedly hidden: ${opened}`);
     await evaluate('Array.from(document.querySelectorAll("a")).find(link => link.textContent?.trim() === "Storage")?.click();');
     await waitFor(() => evaluate('location.pathname === "/storage"'), 'Storage navigation');
     const hidden = await evaluate('document.querySelector(\'iframe[src*="/cockpit-nvidia/"]\')?.contentWindow?.cockpit?.hidden ?? true');
     if (hidden !== true) throw new Error('GPU page stayed visible after navigating away');
-    await waitFor(() => pmonCount() === 0, 'stopped pmon sampler');
-    console.log(JSON.stringify({ result: 'pass', gpuPageHiddenAfterNavigation: hidden, pmonStopped: true }));
+    await evaluate('Array.from(document.querySelectorAll("a")).find(link => link.textContent?.trim() === "GPU")?.click();');
+    await waitFor(() => evaluate('location.pathname === "/cockpit-nvidia"'), 'return to GPU page');
+    const returned = await page('return { process: doc.querySelector(".gpu-processes tbody")?.textContent || "", busy: doc.querySelector(".gpu-processes tbody")?.getAttribute("aria-busy") };');
+    if (process.env.EXPECT_OLLAMA && (!returned?.process.includes('/usr/lib/ollama/llama-server') || returned.busy !== 'false')) {
+      throw new Error(`GPU process row was not retained on return: ${JSON.stringify(returned)}`);
+    }
+    console.log(JSON.stringify({ result: 'pass', gpuPageHiddenAfterNavigation: hidden, retainedProcessOnReturn: returned?.process.includes('/usr/lib/ollama/llama-server') || false }));
   }
 } finally {
   ws?.close();

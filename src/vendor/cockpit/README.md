@@ -10,7 +10,7 @@ Local adaptations:
 
 - Imports use the package's `window.cockpit` adapter and local helpers.
 - `plot.js` accepts `archive_source` on a PMCD metric description so the
-  GPU plots can read the filtered archive view.
+  GPU plots can read PCP's default archive directory.
 
 These Cockpit modules are not a stable public API. When upgrading Cockpit or
 PatternFly, compare this directory with the new upstream source and run the

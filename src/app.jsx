@@ -4,11 +4,10 @@ import { Grid, GridItem } from '@patternfly/react-core/dist/esm/layouts/Grid/ind
 import { Split, SplitItem } from '@patternfly/react-core/dist/esm/layouts/Split/index.js';
 import { PlotState } from './vendor/cockpit/plot.js';
 import { ZoomControls, SvgPlot } from './vendor/cockpit/cockpit-components-plot.jsx';
-import prepareArchives from './prepare-archives.py';
-import { useGpuProcesses } from './processes.js';
 
 const cockpit = window.cockpit;
-const METRICS = ['nvidia.gpuactive', 'nvidia.memused', 'nvidia.memtotal', 'nvidia.temperature', 'nvidia.power'].map(name => ({ name }));
+const METRICS = ['nvidia.gpuactive', 'nvidia.memused', 'nvidia.memtotal', 'nvidia.temperature', 'nvidia.power',
+  'nvidia.proc.memused', 'proc.psinfo.pid'].map(name => ({ name }));
 const unitConfig = (unit, min_max, widest_string = unit) => ({
   min_max,
   pull_out_unit: true,
@@ -45,59 +44,86 @@ function useGpuNames() {
   return names;
 }
 
-function useArchiveSource() {
-  const [source, setSource] = useState({ path: null, revision: 0, error: false });
-  useEffect(() => {
-    let active = true;
-    const refresh = () => cockpit.spawn(['python3', '-c', prepareArchives], { err: 'message' })
-      .then(path => { if (active) setSource(previous => ({ path: path.trim(), revision: previous.revision + 1, error: false })); })
-      .catch(error => {
-        console.error('Could not prepare PCP GPU archives', error);
-        if (active) setSource(previous => ({ ...previous, error: true }));
-      });
-    refresh();
-    const timer = window.setInterval(refresh, 15 * 60 * 1000);
-    return () => { active = false; window.clearInterval(timer); };
-  }, []);
-  return source;
+function processRows(sample, metadata) {
+  const gpuMemory = sample?.[5];
+  const gpuInstances = metadata?.metrics?.[5]?.instances || [];
+  const processInstances = metadata?.metrics?.[6]?.instances || [];
+  if (!Array.isArray(gpuMemory)) return [];
+
+  // Metadata and samples may have different instance orders during process churn.
+  const names = new Map(processInstances.flatMap(instance => {
+    const match = instance.match(/^(\d+)\s+(.+)$/);
+    return match ? [[Number(match[1]), match[2]]] : [];
+  }));
+  return gpuInstances.flatMap((instance, index) => {
+    const match = instance.match(/^gpu(\d+)::(\d+)$/);
+    const memoryBytes = gpuMemory[index];
+    if (!match || typeof memoryBytes !== 'number' || !Number.isFinite(memoryBytes)) return [];
+    const pid = Number(match[2]);
+    return [{ gpuIndex: Number(match[1]), pid, name: names.get(pid) || `PID ${pid}`, memoryBytes }];
+  }).sort((a, b) => b.memoryBytes - a.memoryBytes || a.pid - b.pid);
 }
 
 function useLiveMetrics() {
-  const [data, setData] = useState({ rows: [], instances: [], unavailable: false });
+  const [data, setData] = useState({ rows: [], instances: [], processes: [], loading: true, unavailable: false, visible: !cockpit.hidden });
   useEffect(() => {
-    let active = true;
     let metrics;
     let grid;
     let timeout;
-    try {
-      metrics = cockpit.metrics(2000, { source: 'pmcd', metrics: METRICS });
-      grid = cockpit.grid(2000, -6, -0);
-      const row = grid.add(metrics);
-      const update = () => {
-        if (!active) return;
-        setData({ rows: Array.from({ length: 6 }, (_, index) => row[index]), instances: metrics.meta?.metrics?.[0]?.instances || [], unavailable: false });
-      };
-      grid.addEventListener('notify', update);
-      metrics.addEventListener('changed', update);
-      grid.sync();
-      grid.walk();
-      metrics.follow();
-      timeout = window.setTimeout(() => { if (active) setData(previous => ({ ...previous, unavailable: !previous.rows.some(Boolean) })); }, 8000);
-    } catch (error) {
-      console.error('Could not open NVIDIA metrics', error);
-      setData({ rows: [], instances: [], unavailable: true });
-    }
-    return () => { active = false; window.clearTimeout(timeout); metrics?.close(); grid?.close(); };
+
+    const stop = (updateState = true) => {
+      window.clearTimeout(timeout);
+      grid?.close();
+      metrics?.close();
+      grid = metrics = undefined;
+      if (updateState) setData(previous => ({ ...previous, visible: false }));
+    };
+
+    const start = () => {
+      if (metrics) return;
+      setData(previous => ({ ...previous, loading: !previous.rows.some(Boolean), unavailable: false, visible: true }));
+      try {
+        metrics = cockpit.metrics(2000, { source: 'pmcd', metrics: METRICS });
+        grid = cockpit.grid(2000, -6, -0);
+        const row = grid.add(metrics);
+        const update = () => {
+          if (!metrics?.meta) return;
+          const rows = Array.from({ length: 6 }, (_, index) => row[index]);
+          const sample = latestSample(rows);
+          if (!sample) return;
+          window.clearTimeout(timeout);
+          setData({ rows, instances: metrics.meta.metrics[0]?.instances || [],
+            processes: processRows(sample, metrics.meta), loading: false, unavailable: false, visible: true });
+        };
+        grid.addEventListener('notify', update);
+        metrics.addEventListener('changed', update);
+        grid.sync();
+        grid.walk();
+        metrics.follow();
+        timeout = window.setTimeout(() => {
+          if (metrics) setData(previous => ({ ...previous, loading: false, unavailable: true }));
+        }, 8000);
+      } catch (error) {
+        console.error('Could not open NVIDIA metrics', error);
+        stop(false);
+        setData(previous => ({ ...previous, processes: [], loading: false, unavailable: true, visible: true }));
+      }
+    };
+
+    const visibilityChanged = () => { if (cockpit.hidden) stop(); else start(); };
+    cockpit.addEventListener('visibilitychange', visibilityChanged);
+    visibilityChanged();
+    return () => { cockpit.removeEventListener('visibilitychange', visibilityChanged); stop(false); };
   }, []);
   return data;
 }
 
-function useGpuPlots(source, instance) {
+function useGpuPlots(instance) {
   const [plotState, setPlotState] = useState(null);
   useEffect(() => {
     if (!instance) return undefined;
     const state = new PlotState();
-    const common = { ...(source ? { archive_source: source } : {}), instances: [instance] };
+    const common = { archive_source: 'pcp-archive', instances: [instance] };
     state.plot_single('utilization', { ...common, pmcd: ['nvidia.gpuactive'] });
     state.plot_single('memory', { ...common, pmcd: ['nvidia.memused'], factor: 1 / 2 ** 30 });
     state.plot_single('temperature', { ...common, pmcd: ['nvidia.temperature'] });
@@ -107,7 +133,7 @@ function useGpuPlots(source, instance) {
       Object.values(state.plots).forEach(plot => plot.destroy());
       setPlotState(current => current === state ? null : current);
     };
-  }, [source, instance]);
+  }, [instance]);
   return plotState;
 }
 
@@ -123,18 +149,16 @@ const value = (sample, metric, gpu) => {
 };
 const bytes = number => number == null ? '—' : `${(number / 2 ** 30).toFixed(1)} GiB`;
 const reading = (number, unit) => number == null ? '—' : `${Math.round(number)} ${unit}`;
-const processMemory = mebibytes => mebibytes == null ? '—' : mebibytes < 1024 ? `${Math.round(mebibytes)} MiB` : `${(mebibytes / 1024).toFixed(1)} GiB`;
+const processMemory = bytes => bytes == null ? '—' : bytes < 2 ** 30 ? `${Math.round(bytes / 2 ** 20)} MiB` : `${(bytes / 2 ** 30).toFixed(1)} GiB`;
 
 export function App() {
   const [gpu, setGpu] = useState(0);
   const live = useLiveMetrics();
   const names = useGpuNames();
-  const archive = useArchiveSource();
-  const processes = useGpuProcesses();
   const current = latestSample(live.rows);
   const instances = live.instances.length ? live.instances : (current?.[0]?.map((_, index) => `gpu${index}`) || []);
   const selectedGpu = Math.min(gpu, Math.max(instances.length - 1, 0));
-  const plotState = useGpuPlots(archive.path, instances[selectedGpu]);
+  const plotState = useGpuPlots(instances[selectedGpu]);
 
   return <Page id="gpu" className="pf-m-no-sidebar">
     <PageSection hasBodyWrapper={false} isFilled={false}>
@@ -148,8 +172,7 @@ export function App() {
         </Grid>
       </>}
       <section className="gpu-devices" aria-label="GPU readings">
-        {live.unavailable && !current && <div className="gpu-message" role="alert">GPU metrics are unavailable. Check that the PCP NVIDIA PMDA is enabled.</div>}
-        {archive.error && <div className="gpu-message" role="status">History will appear after the PCP logger records GPU samples.</div>}
+        {live.unavailable && <div className="gpu-message" role="alert">GPU metrics are unavailable. Check that PCP and the NVIDIA PMDA are enabled.</div>}
         <div className="gpu-table-scroll"><table className="gpu-table">
           <thead><tr><th scope="col">GPU</th><th scope="col">Utilization</th><th scope="col">VRAM occupied</th><th scope="col">Temperature</th><th scope="col">Power draw</th></tr></thead>
           <tbody>{instances.length ? instances.map((name, index) => {
@@ -166,16 +189,14 @@ export function App() {
         </table></div>
       </section>
       <section className="gpu-processes" aria-label="GPU processes">
-        {processes.error && <div className="gpu-message" role="status">Could not read NVIDIA processes.</div>}
         <div className="gpu-table-scroll"><table className="gpu-table">
-          <thead><tr><th scope="col">Process</th><th scope="col">PID</th><th scope="col">GPU</th><th scope="col">VRAM</th><th scope="col">SM activity</th></tr></thead>
-          <tbody>{processes.rows.length ? processes.rows.map(process => <tr key={`${process.gpuIndex}:${process.pid}`}>
+          <thead><tr><th scope="col">Process</th><th scope="col">PID</th><th scope="col">GPU</th><th scope="col">VRAM</th></tr></thead>
+          <tbody aria-busy={live.loading}>{live.loading ? null : live.processes.length ? live.processes.map(process => <tr key={`${process.gpuIndex}:${process.pid}`}>
             <th scope="row"><span className="gpu-process-path">{process.name || '—'}</span></th>
             <td>{process.pid}</td>
             <td>{names[`gpu${process.gpuIndex}`] || `GPU ${process.gpuIndex}`}</td>
-            <td>{processMemory(process.memoryMiB)}</td>
-            <td>{process.activity == null ? '—' : `${process.activity} %`}</td>
-          </tr>) : <tr><td colSpan="5">{processes.loading ? 'Checking GPU processes…' : processes.visible ? 'No GPU processes' : 'Open the GPU page to see live processes'}</td></tr>}</tbody>
+            <td>{processMemory(process.memoryBytes)}</td>
+          </tr>) : <tr><td colSpan="4">{live.visible ? 'No GPU processes' : 'Open the GPU page to see live processes'}</td></tr>}</tbody>
         </table></div>
       </section>
     </PageSection>

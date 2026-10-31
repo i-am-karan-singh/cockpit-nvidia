@@ -9,7 +9,7 @@ await build({
   bundle: true,
   outfile: 'dist/index.js',
   target: 'es2020',
-  loader: { '.css': 'css', '.woff2': 'file', '.svg': 'file', '.py': 'text' },
+  loader: { '.css': 'css', '.woff2': 'file', '.svg': 'file' },
   sourcemap: true,
   legalComments: 'external',
   plugins: [sassPlugin()],

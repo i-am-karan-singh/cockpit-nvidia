@@ -4,15 +4,15 @@ Authored by codex.
 
 A Cockpit page for NVIDIA GPU performance using Performance Co-Pilot (PCP). It
 shows live utilization, VRAM occupancy, temperature, and power, with PCP archive
-graphs from five minutes through one week. A live process table uses `nvidia-smi`
-for process memory and SM activity. It does not run its own polling service or
+graphs from five minutes through one week. A live process table reads process
+names and per-GPU VRAM from PCP. It does not run its own polling service or
 store a separate history database.
 
 ## Requirements
 
 - Cockpit 370 or newer (Arch package: `cockpit`)
 - PCP with its packaged NVIDIA PMDA (Arch package: `pcp`)
-- NVIDIA driver with working NVML access and `nvidia-smi` (Arch package: `nvidia-utils`)
+- NVIDIA driver with working NVML access (Arch package: `nvidia-utils`)
 - Node.js and npm for building the page
 
 ## Build and install
@@ -43,11 +43,18 @@ should report a card count and GPU readings. History begins after setup;
 existing PCP archive retention settings apply.
 
 The packaged PCP configuration may also enable its standard NVIDIA logging
-groups when the PMDA becomes available. The process table uses live `nvidia-smi`
-data rather than PCP's lifetime-average process activity metric. Process memory
-is queried every five seconds and one `pmon` process samples SM activity every
-five seconds while the GPU page is visible. Cockpit stops both when the page is
-hidden or closed. Process readings are not logged by this plugin.
+groups when the PMDA becomes available. The process table joins PCP's
+`nvidia.proc.memused` with Linux `proc.psinfo.pid` by PID; the latter's instance
+label includes the executable path. Both tables share one PCP channel and
+refresh every two seconds while the GPU page is visible; the channel closes
+when the page is hidden. On return, both tables show their last readings
+immediately until the next sample arrives. The process table omits per-process
+GPU activity because PCP's value is a lifetime average. The plugin does not
+add process metrics to its custom archive logging group.
+
+PCP also exposes `nvidia.memactive`, the percentage of time GPU memory was
+accessed during a sample period. That is not measured memory bandwidth in
+bytes per second, so the page does not present it as a bandwidth chart.
 
 To update the page after editing source files, rerun `npm run build` and
 `sudo ./scripts/install-plugin.sh`, then reload Cockpit.
@@ -62,26 +69,24 @@ the same PatternFly 6.6 package versions as Cockpit 370.
 
 ## Archive handling
 
-Cockpit checks every archive in a source directory for the requested metric
-before returning history. An older archive without GPU metrics would make the
-chart's history request fail, even for a recent time range. The live plot still
-receives new readings from `pmcd` while the page is open.
+The plots read Cockpit's default PCP archive source directly. `pmlogger`
+records GPU readings in `/var/log/pcp/pmlogger/<hostname>`; PCP controls
+archive rotation and retention. The plugin does not create an archive view,
+copy logs, or run a history preparation helper.
 
-On page load, a helper creates a per-user view under `/var/tmp` containing
-compatible archives. It checks all retained archives, with no age cutoff,
-and caches each archive's compatibility using its index timestamp and size.
-Later runs check only new or changed archives. Active archive files are
-symlinked, so new writes remain visible. Compressed files are copied using
-reflinks where supported, because PCP cannot read them through symlinks;
-`cp --reflink=auto` uses a full copy otherwise. The source archives are
-untouched. The page refreshes the view every 15 minutes to pick up rotations.
-PCP's archive retention controls how far back history is available.
+This setup assumes every archive in that directory contains the plotted GPU
+metrics. Cockpit checks every archive for the requested metric before it
+returns historical samples. If an older archive lacking a metric is restored,
+that chart's history request will fail even for a recent time range. Live
+readings from `pmcd` will still appear while the page is open. For this host,
+the user chose to delete incompatible old PCP logs to make direct history
+work, accepting the loss of their older samples. Adding a newly logged metric
+later may require the same decision again.
 
-A possible future alternative is a separate GPU `pmlogger` instance writing
-to its own archive directory, which Cockpit can read by absolute path. That
-would remove the filtered view for new history, but it would need separate
-logger and retention configuration. Existing GPU history would need migration
-to appear in the new directory.
+A possible, unimplemented alternative is a separate GPU `pmlogger` instance
+writing to its own archive directory, which Cockpit can read by absolute path.
+It would need separate logger and retention configuration, and existing GPU
+history would need migration to appear there.
 
 The VRAM graph and table use PCP's `nvidia.memused` in GiB. This is NVML's
 older frame-buffer memory counter and includes driver-reserved memory. On this
@@ -99,5 +104,6 @@ node test/browser-smoke.mjs
 
 The browser test uses the local, Git-ignored `.localcred` file in
 `user:password` format, logs into Cockpit at `https://127.0.0.1:9090`, checks
-live readings and all history ranges, and writes a screenshot to
-`/tmp/cockpit-nvidia-smoke.png`. Keep `.localcred` readable only by your user.
+live readings, an actual sample from the default PCP archive, and all history
+ranges, then writes a screenshot to `/tmp/cockpit-nvidia-smoke.png`. Keep
+`.localcred` readable only by your user.
