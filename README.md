@@ -17,6 +17,42 @@ store a separate history database.
 
 ## Build and install
 
+### Nix flake and Home Manager
+
+The flake builds the Cockpit page and includes the PCP setup script. On this
+Arch host, add `github:i-am-karan-singh/cockpit-nvidia` as an input to your
+Home Manager flake, import its module, and enable the page:
+
+```nix
+# In your flake inputs:
+cockpit-nvidia.url = "github:i-am-karan-singh/cockpit-nvidia";
+
+# In the Home Manager module for the Cockpit login user:
+imports = [ inputs.cockpit-nvidia.homeManagerModules.default ];
+programs.cockpit-nvidia.enable = true;
+```
+
+Activate that Home Manager configuration normally, without sudo. The module
+links the page to `~/.local/share/cockpit/cockpit-nvidia`, which Cockpit
+searches before `/usr/local/share/cockpit`. It is per-user: other Cockpit
+logins will not see this Home Manager installation. The package is also
+available as `nix build github:i-am-karan-singh/cockpit-nvidia` without Home
+Manager; a profile install by itself does not place the page in Cockpit's
+user package directory.
+
+The existing PCP setup can be run explicitly from the flake on Arch:
+
+```sh
+nix run github:i-am-karan-singh/cockpit-nvidia#setup-pcp
+```
+
+This app invokes the packaged `install-pcp.sh` using the host's `/usr/bin/sudo`
+and changes the system PMDA and logger configuration as described below.
+Home Manager activation does not run it. On a host where PCP is already set
+up, there is no need to run it again.
+
+### Manual installation
+
 Enable Cockpit and PCP's collector and archive logger:
 
 ```sh

@@ -2,7 +2,7 @@
 set -eu
 
 if [ "$(id -u)" -ne 0 ]; then
-    echo "Run as root: sudo ./scripts/install-pcp.sh" >&2
+    echo "Run as root: sudo $0" >&2
     exit 1
 fi
 

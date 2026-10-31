@@ -104,6 +104,18 @@ decisions, host-specific findings, and the reasons behind them.
 
 ## Working on this headless host
 
+- `flake.nix` builds the page with Nix, exposes an explicit `setup-pcp` app,
+  and offers a Home Manager module that links the page into the Cockpit
+  login user's XDG data directory. The packaged PCP script and `pcp/core`
+  retain the relative layout the script expects. The setup app uses the
+  host's `/usr/bin/sudo`; Home Manager activation does not run it.
+- The main account `karan` has an existing standalone Home Manager flake at
+  `/home/karan/.config/home-manager` with `homeConfigurations.karan`. Use it
+  for the per-user installation. The `.localcred` account does not have this
+  Home Manager setup. For the flake installation, do not read `.localcred`
+  or run the login-based browser smoke test; the user will confirm Cockpit
+  manually. `cockpit-bridge --packages` as `karan` checks package discovery.
+
 - Chromium is installed. `test/browser-smoke.mjs` uses Chrome DevTools
   Protocol to log into local Cockpit at `https://127.0.0.1:9090` and inspect
   the rendered iframe. `.localcred` contains `user:password` for this local
