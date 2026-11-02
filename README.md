@@ -1,6 +1,6 @@
 # Cockpit NVIDIA GPU
 
-_Authored by codex._ See [HUMANS.md](HUMANS.md) if want a version written by a human.
+_Authored by codex._ See [HUMANS.md](HUMANS.md) if you want a human-authored version.
 
 A Cockpit page for NVIDIA GPU performance using Performance Co-Pilot (PCP). It
 shows live utilization, VRAM occupancy, temperature, and power, with PCP archive
